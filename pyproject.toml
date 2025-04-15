@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sleap_client"
+version = "0.0.1a1"
+authors = [
+  { name="Amick Licup", email="alicup@ucsd.edu" }
+]
+description = "webRTC client for file transfer & SLEAP training."
+readme = "README.md"
+requires-python = ">=3.11"
+keywords = ["sleap", "webRTC", "client", "file", "training"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+  "Operating System :: OS Independent",
+  "Development Status :: 3 - Alpha"
+]
+dependencies = [
+  "aiortc",
+  "asyncio",
+  "websockets",  
+]
+
+[project.urls]
+Homepage = "https://github.com/talmolab/webRTC-client"
+
+[project.optional-dependencies]
+dev = [
+  "toml",
+  "twine",
+  "build",
+]
+
+[project.scripts]
+sleap-client = "sleap_client.client:entrypoint" # CLI entry point
