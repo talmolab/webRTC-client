@@ -32,6 +32,13 @@ dev = [
   "toml",
   "twine",
   "build",
+  "pytest",
+  "pytest-asyncio",
+  "asynctest",
+  "coverage",
+  "pytest-cov",
+  "pytest-asyncio",
+  "coverage"
 ]
 
 [project.scripts]
