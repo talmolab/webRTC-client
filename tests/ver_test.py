@@ -1,0 +1,2 @@
+import sleap_client
+print(sleap_client.__version__)
