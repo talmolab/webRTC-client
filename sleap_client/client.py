@@ -50,18 +50,18 @@ async def handle_connection(pc: RTCPeerConnection, websocket):
 
             # 1. receive answer SDP from worker and set it as this peer's remote description
             if data.get('type') == 'answer':
-                print(f"Received answer from worker: {data}")
+                logging.info(f"Received answer from worker: {data}")
 
                 await pc.setRemoteDescription(RTCSessionDescription(sdp=data.get('sdp'), type=data.get('type')))
 
             # 2. to handle "trickle ICE" for non-local ICE candidates (might be unnecessary)
             elif data.get('type') == 'candidate':
-                print("Received ICE candidate")
+                logging.info("Received ICE candidate")
                 candidate = data.get('candidate')
                 await pc.addIceCandidate(candidate)
 
             elif data.get('type') == 'quit': # NOT initiator, received quit request from worker
-                print("Worker has quit. Closing connection...")
+                logging.info("Worker has quit. Closing connection...")
                 await clean_exit(pc, websocket)
                 break
 
@@ -293,17 +293,19 @@ def entrypoint():
 
     parser.add_argument("--server", type=str, default="ws://ec2-54-158-36-90.compute-1.amazonaws.com", help="WebSocket server DNS/address, ex. 'ws://ec2-54-158-36-90.compute-1.amazonaws.com'")
     parser.add_argument("--port", type=int, default=8080, help="WebSocket server port number, ex. '8080'")
+    parser.add_argument("--peer_id", type=str, default="client1", help="Unique identifier for the client")
 
     args = parser.parse_args()
 
     DNS = args.server
     port_number = args.port
+    peer_id = args.peer_id
 
     # DNS = sys.argv[1] if len(sys.argv) > 1 else "ws://ec2-3-80-210-101.compute-1.amazonaws.com"
     # port_number = sys.argv[2] if len(sys.argv) > 1 else 8080
 
     try: 
-        asyncio.run(run_client(pc, "client1", DNS, port_number))
+        asyncio.run(run_client(pc, peer_id, DNS, port_number))
     except KeyboardInterrupt:
         logging.info("KeyboardInterrupt: Exiting...")
     finally:
