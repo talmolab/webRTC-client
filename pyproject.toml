@@ -38,8 +38,18 @@ dev = [
   "coverage",
   "pytest-cov",
   "pytest-asyncio",
-  "coverage"
+  "coverage",
+  "anyio",
+  "pytest-tornasync",
+  "pytest-trio",
+  "pytest-twisted",
 ]
 
 [project.scripts]
 sleap-client = "sleap_client.client:entrypoint" # CLI entry point
+
+[tool.pytest.ini_options]
+markers = [
+    "asyncio: mark test to be run asynchronously with pytest-asyncio"
+]
+asyncio_mode = "auto"
