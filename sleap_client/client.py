@@ -7,7 +7,6 @@ import logging
 import os
 
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
-from websockets import WebSocketClientProtocol
 
 # setup logging
 logging.basicConfig(level=logging.INFO)
@@ -67,8 +66,8 @@ async def handle_connection(pc: RTCPeerConnection, websocket):
 
             # 3. error handling
             else:
-                logging.DEBUG(f"Unhandled message: {data}")
-                logging.DEBUG("exiting...")
+                logging.debug(f"Unhandled message: {data}")
+                logging.debug("exiting...")
                 break
     
     except json.JSONDecodeError:
@@ -94,7 +93,7 @@ async def run_client(pc, peer_id: str, DNS: str, port_number: str):
 		Exception: An error occurred while running the client
     """
 
-    channel = pc.createDataChannel("my-data-channel")
+    channel = await pc.createDataChannel("my-data-channel")
     logging.info("channel(%s) %s" % (channel.label, "created by local party."))
 
     async def keep_ice_alive(channel):
@@ -153,7 +152,7 @@ async def run_client(pc, peer_id: str, DNS: str, port_number: str):
                 with open(file_path, "rb") as file:
                     logging.info(f"File opened: {file_path}")
                     while chunk := file.read(CHUNK_SIZE):
-                        while channel.bufferedAmount > 16 * 1024 * 1024: # Wait if buffer >16MB 
+                        while channel.bufferedAmount is not None and channel.bufferedAmount > 16 * 1024 * 1024: # Wait if buffer >16MB 
                             await asyncio.sleep(0.1)
 
                         channel.send(chunk)
@@ -219,7 +218,8 @@ async def run_client(pc, peer_id: str, DNS: str, port_number: str):
             elif ":" in message:
                 # Metadata received (file name & size)
                 file_name, file_size = message.split(":")
-                received_files[file_name] = bytearray()
+                if file_name not in received_files:
+                  received_files[file_name] = bytearray()  # Initialize as bytearray
                 logging.info(f"File name received: {file_name}, of size {file_size}")
             else:
                 logging.info(f"Worker sent: {message}")
@@ -227,12 +227,14 @@ async def run_client(pc, peer_id: str, DNS: str, port_number: str):
                 
         elif isinstance(message, bytes):
             file_name = list(received_files.keys())[0]
-            received_files.get(file_name).extend(message)
+            if file_name not in received_files:
+              received_files[file_name] = bytearray()
+            received_files[file_name].extend(message)
                 
         # await send_client_messages()
 
 
-    @pc.on("iceconnectionstatechange")
+    # @pc.on("iceconnectionstatechange")
     async def on_iceconnectionstatechange():
         logging.info(f"ICE connection state is now {pc.iceConnectionState}")
         if pc.iceConnectionState in ["connected", "completed"]:
@@ -246,6 +248,9 @@ async def run_client(pc, peer_id: str, DNS: str, port_number: str):
             logging.info("ICE connection closed.")
             await clean_exit(pc, websocket)
             return
+        
+    # Register the event handler explicitly
+    pc.on("iceconnectionstatechange", on_iceconnectionstatechange)
 
 
     # 1. client registers with the signaling server (temp: localhost:8080) via websocket connection
