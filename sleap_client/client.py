@@ -77,7 +77,7 @@ async def handle_connection(pc: RTCPeerConnection, websocket):
         logging.DEBUG(f"Error handling message: {e}")
 
 
-async def run_client(pc, peer_id: str, DNS: str, port_number: str):
+async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = None, CLI: bool = True):
     """Sends initial SDP offer to worker peer and establishes both connection & datachannel to be used by both parties.
 	
 		Initializes websocket to select worker peer and sends datachannel object to worker.
@@ -93,6 +93,7 @@ async def run_client(pc, peer_id: str, DNS: str, port_number: str):
 		Exception: An error occurred while running the client
     """
 
+    pc = RTCPeerConnection()
     channel = pc.createDataChannel("my-data-channel")
     logging.info("channel(%s) %s" % (channel.label, "created by local party."))
 
@@ -181,6 +182,54 @@ async def run_client(pc, peer_id: str, DNS: str, port_number: str):
         #   logging.info(f"File sent to worker.")
 
 
+    async def send_client_file():
+        """Handles direct, one-way file transfer from client to be sent to worker peer.
+        
+		  Takes file from client and sends it to worker peer via datachannel. Doesn't require typed responses.
+	
+        Args:
+			None
+        
+		Returns:
+			None
+        
+        """
+        
+        if channel.readyState != "open":
+            logging.info(f"Data channel not open. Ready state is: {channel.readyState}")
+            return 
+
+        logging.info(f"Given file path {file_path}")
+        if not file_path:
+            logging.info("No file path entered.")
+            return
+        if not os.path.exists(file_path):
+            logging.info("File does not exist.")
+            return
+        else: 
+            logging.info(f"Sending {file_path} to worker...")
+
+            # Obtain metadata
+            file_name = os.path.basename(file_path)
+            file_size = os.path.getsize(file_path)
+            
+            # Send metadata first
+            channel.send(f"{file_name}:{file_size}")  
+
+            # Send file in chunks (32 KB)
+            with open(file_path, "rb") as file:
+                logging.info(f"File opened: {file_path}")
+                while chunk := file.read(CHUNK_SIZE):
+                    while channel.bufferedAmount is not None and channel.bufferedAmount > 16 * 1024 * 1024: # Wait if buffer >16MB 
+                        await asyncio.sleep(0.1)
+
+                    channel.send(chunk)
+
+            channel.send("END_OF_FILE")
+            logging.info(f"File sent to worker.")
+            
+        return
+
     @channel.on("open")
     async def on_channel_open():
         """Event handler function for when the datachannel is open.
@@ -193,7 +242,11 @@ async def run_client(pc, peer_id: str, DNS: str, port_number: str):
 
         asyncio.create_task(keep_ice_alive(channel))
         logging.info(f"{channel.label} is open")
-        await send_client_messages()
+        
+        if CLI:
+            await send_client_messages()
+        else:
+            await send_client_file()
     
 
     @channel.on("message")
@@ -214,7 +267,14 @@ async def run_client(pc, peer_id: str, DNS: str, port_number: str):
                 logging.info(f"File saved as: {file_path}")
                 
                 received_files.clear()
-                await send_client_messages()
+
+                if CLI:
+                    # Prompt for next message
+                    logging.info("File transfer complete. Enter next message:")
+                    await send_client_messages()
+                else:
+                    await clean_exit(pc, websocket)
+
             elif ":" in message:
                 # Metadata received (file name & size)
                 file_name, file_size = message.split(":")
@@ -253,7 +313,7 @@ async def run_client(pc, peer_id: str, DNS: str, port_number: str):
     pc.on("iceconnectionstatechange", on_iceconnectionstatechange)
 
 
-    # 1. client registers with the signaling server (temp: localhost:8080) via websocket connection
+    # 1. client registers with the signaling server via websocket connection
     # this is how the client will know the worker peer exists
     async with websockets.connect(f"{DNS}:{port_number}") as websocket:
         # 1a. register the client with the signaling server
@@ -287,14 +347,13 @@ async def run_client(pc, peer_id: str, DNS: str, port_number: str):
     
 
 def entrypoint():
-    """Main function to run the client.
+    """Main CLI function to run the client.
       Args:
         None
       Returns:
         None
     """
     parser = argparse.ArgumentParser(description="SLEAP webRTC Client")
-    pc = RTCPeerConnection()
 
     parser.add_argument("--server", type=str, default="ws://ec2-54-153-105-27.us-west-1.compute.amazonaws.com", help="WebSocket server DNS/address, ex. 'ws://ec2-54-158-36-90.compute-1.amazonaws.com'")
     parser.add_argument("--port", type=int, default=8080, help="WebSocket server port number, ex. '8080'")
@@ -306,11 +365,8 @@ def entrypoint():
     port_number = args.port
     peer_id = args.peer_id
 
-    # DNS = sys.argv[1] if len(sys.argv) > 1 else "ws://ec2-3-80-210-101.compute-1.amazonaws.com"
-    # port_number = sys.argv[2] if len(sys.argv) > 1 else 8080
-
     try: 
-        asyncio.run(run_client(pc, peer_id, DNS, port_number))
+        asyncio.run(run_client(peer_id, DNS, port_number, file_path=None, CLI=True))
     except KeyboardInterrupt:
         logging.info("KeyboardInterrupt: Exiting...")
     finally:
