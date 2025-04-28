@@ -7,7 +7,6 @@ import logging
 import os
 
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
-from websockets import WebSocketClientProtocol
 
 # setup logging
 logging.basicConfig(level=logging.INFO)
@@ -50,25 +49,25 @@ async def handle_connection(pc: RTCPeerConnection, websocket):
 
             # 1. receive answer SDP from worker and set it as this peer's remote description
             if data.get('type') == 'answer':
-                print(f"Received answer from worker: {data}")
+                logging.info(f"Received answer from worker: {data}")
 
                 await pc.setRemoteDescription(RTCSessionDescription(sdp=data.get('sdp'), type=data.get('type')))
 
             # 2. to handle "trickle ICE" for non-local ICE candidates (might be unnecessary)
             elif data.get('type') == 'candidate':
-                print("Received ICE candidate")
+                logging.info("Received ICE candidate")
                 candidate = data.get('candidate')
                 await pc.addIceCandidate(candidate)
 
             elif data.get('type') == 'quit': # NOT initiator, received quit request from worker
-                print("Worker has quit. Closing connection...")
+                logging.info("Worker has quit. Closing connection...")
                 await clean_exit(pc, websocket)
                 break
 
             # 3. error handling
             else:
-                logging.DEBUG(f"Unhandled message: {data}")
-                logging.DEBUG("exiting...")
+                logging.debug(f"Unhandled message: {data}")
+                logging.debug("exiting...")
                 break
     
     except json.JSONDecodeError:
@@ -153,7 +152,7 @@ async def run_client(pc, peer_id: str, DNS: str, port_number: str):
                 with open(file_path, "rb") as file:
                     logging.info(f"File opened: {file_path}")
                     while chunk := file.read(CHUNK_SIZE):
-                        while channel.bufferedAmount > 16 * 1024 * 1024: # Wait if buffer >16MB 
+                        while channel.bufferedAmount is not None and channel.bufferedAmount > 16 * 1024 * 1024: # Wait if buffer >16MB 
                             await asyncio.sleep(0.1)
 
                         channel.send(chunk)
@@ -219,7 +218,8 @@ async def run_client(pc, peer_id: str, DNS: str, port_number: str):
             elif ":" in message:
                 # Metadata received (file name & size)
                 file_name, file_size = message.split(":")
-                received_files[file_name] = bytearray()
+                if file_name not in received_files:
+                  received_files[file_name] = bytearray()  # Initialize as bytearray
                 logging.info(f"File name received: {file_name}, of size {file_size}")
             else:
                 logging.info(f"Worker sent: {message}")
@@ -227,12 +227,14 @@ async def run_client(pc, peer_id: str, DNS: str, port_number: str):
                 
         elif isinstance(message, bytes):
             file_name = list(received_files.keys())[0]
-            received_files.get(file_name).extend(message)
+            if file_name not in received_files:
+              received_files[file_name] = bytearray()
+            received_files[file_name].extend(message)
                 
         # await send_client_messages()
 
 
-    @pc.on("iceconnectionstatechange")
+    # @pc.on("iceconnectionstatechange")
     async def on_iceconnectionstatechange():
         logging.info(f"ICE connection state is now {pc.iceConnectionState}")
         if pc.iceConnectionState in ["connected", "completed"]:
@@ -246,6 +248,9 @@ async def run_client(pc, peer_id: str, DNS: str, port_number: str):
             logging.info("ICE connection closed.")
             await clean_exit(pc, websocket)
             return
+        
+    # Register the event handler explicitly
+    pc.on("iceconnectionstatechange", on_iceconnectionstatechange)
 
 
     # 1. client registers with the signaling server (temp: localhost:8080) via websocket connection
@@ -291,19 +296,21 @@ def entrypoint():
     parser = argparse.ArgumentParser(description="SLEAP webRTC Client")
     pc = RTCPeerConnection()
 
-    parser.add_argument("--server", type=str, default="ws://ec2-54-158-36-90.compute-1.amazonaws.com", help="WebSocket server DNS/address, ex. 'ws://ec2-54-158-36-90.compute-1.amazonaws.com'")
+    parser.add_argument("--server", type=str, default="ws://ec2-54-153-105-27.us-west-1.compute.amazonaws.com", help="WebSocket server DNS/address, ex. 'ws://ec2-54-158-36-90.compute-1.amazonaws.com'")
     parser.add_argument("--port", type=int, default=8080, help="WebSocket server port number, ex. '8080'")
+    parser.add_argument("--peer_id", type=str, default="client1", help="Unique identifier for the client")
 
     args = parser.parse_args()
 
     DNS = args.server
     port_number = args.port
+    peer_id = args.peer_id
 
     # DNS = sys.argv[1] if len(sys.argv) > 1 else "ws://ec2-3-80-210-101.compute-1.amazonaws.com"
     # port_number = sys.argv[2] if len(sys.argv) > 1 else 8080
 
     try: 
-        asyncio.run(run_client(pc, "client1", DNS, port_number))
+        asyncio.run(run_client(pc, peer_id, DNS, port_number))
     except KeyboardInterrupt:
         logging.info("KeyboardInterrupt: Exiting...")
     finally:
