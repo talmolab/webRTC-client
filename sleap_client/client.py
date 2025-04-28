@@ -93,7 +93,7 @@ async def run_client(pc, peer_id: str, DNS: str, port_number: str):
 		Exception: An error occurred while running the client
     """
 
-    channel = await pc.createDataChannel("my-data-channel")
+    channel = pc.createDataChannel("my-data-channel")
     logging.info("channel(%s) %s" % (channel.label, "created by local party."))
 
     async def keep_ice_alive(channel):
@@ -296,7 +296,7 @@ def entrypoint():
     parser = argparse.ArgumentParser(description="SLEAP webRTC Client")
     pc = RTCPeerConnection()
 
-    parser.add_argument("--server", type=str, default="ws://ec2-54-158-36-90.compute-1.amazonaws.com", help="WebSocket server DNS/address, ex. 'ws://ec2-54-158-36-90.compute-1.amazonaws.com'")
+    parser.add_argument("--server", type=str, default="ws://ec2-54-153-105-27.us-west-1.compute.amazonaws.com", help="WebSocket server DNS/address, ex. 'ws://ec2-54-158-36-90.compute-1.amazonaws.com'")
     parser.add_argument("--port", type=int, default=8080, help="WebSocket server port number, ex. '8080'")
     parser.add_argument("--peer_id", type=str, default="client1", help="Unique identifier for the client")
 
