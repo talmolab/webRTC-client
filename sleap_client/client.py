@@ -7,9 +7,15 @@ import logging
 import os
 
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
+from qtpy.QtWidgets import QFileDialog, QApplication
 
 # setup logging
 logging.basicConfig(level=logging.INFO)
+
+# set up QApplication for file dialog
+app = QApplication.instance()
+if app is None:
+    app = QApplication(sys.argv)
 
 # global variables
 CHUNK_SIZE = 64 * 1024
@@ -260,7 +266,12 @@ async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = 
             if message == "END_OF_FILE":
                 # File transfer complete, save to disk
                 file_name, file_data = list(received_files.items())[0]
-                file_path = os.path.join(SAVE_DIR, file_name)
+                save_dir = QFileDialog.getExistingDirectory(
+                    None,
+                    f"Select directory to save received file: {file_name}",
+                    os.getcwd()
+                )
+                file_path = os.path.join(save_dir, file_name)
                 
                 with open(file_path, "wb") as file:
                     file.write(file_data)
@@ -283,7 +294,7 @@ async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = 
                 logging.info(f"File name received: {file_name}, of size {file_size}")
             else:
                 logging.info(f"Worker sent: {message}")
-                await send_client_messages()
+                # await send_client_messages()
                 
         elif isinstance(message, bytes):
             file_name = list(received_files.keys())[0]
