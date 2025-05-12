@@ -162,7 +162,7 @@ async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = 
                         while channel.bufferedAmount is not None and channel.bufferedAmount > 16 * 1024 * 1024: # Wait if buffer >16MB 
                             await asyncio.sleep(0.1)
 
-                        channel.send(chunk)
+                        # channel.send(chunk)
 
                 channel.send("END_OF_FILE")
                 logging.info(f"File sent to worker.")
@@ -229,7 +229,7 @@ async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = 
                     while channel.bufferedAmount is not None and channel.bufferedAmount > 16 * 1024 * 1024: # Wait if buffer >16MB 
                         await asyncio.sleep(0.1)
 
-                    channel.send(chunk)
+                    # channel.send(chunk)
 
             channel.send("END_OF_FILE")
             logging.info(f"File sent to worker.")
@@ -293,13 +293,13 @@ async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = 
                 else:
                     await clean_exit(pc, websocket)
 
-            elif message.startswith("FILE_META::"): # CHANGE THIS BC SOME MESSAGES CONTAIN ":"
+            elif "FILE_META::" in message: 
                 # Metadata received (file name & size)
                 _, meta = message.split("FILE_META::", 1)
                 file_name, file_size, file_save_dir = meta.split(":")
 
                 if file_name not in received_files:
-                  received_files[file_name] = bytearray()  # Initialize as bytearray
+                    received_files[file_name] = bytearray()  # Initialize as bytearray
                 logging.info(f"File name received: {file_name}, of size {file_size}, saving to {file_save_dir}")
 
             else:
