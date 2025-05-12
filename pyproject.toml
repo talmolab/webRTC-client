@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sleap_client"
-version = "0.0.1a2"
+version = "0.0.1a3"
 authors = [
   { name="Amick Licup", email="alicup@ucsd.edu" }
 ]
@@ -46,3 +46,9 @@ markers = [
     "asyncio: mark test to be run asynchronously with pytest-asyncio"
 ]
 asyncio_mode = "auto"
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+explicit = true
