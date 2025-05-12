@@ -7,15 +7,9 @@ import logging
 import os
 
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
-from qtpy.QtWidgets import QFileDialog, QApplication
 
 # setup logging
 logging.basicConfig(level=logging.INFO)
-
-# set up QApplication for file dialog
-app = QApplication.instance()
-if app is None:
-    app = QApplication(sys.argv)
 
 # global variables
 CHUNK_SIZE = 64 * 1024
@@ -99,6 +93,7 @@ async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = 
 		Exception: An error occurred while running the client
     """
 
+    logging.info("---PIP PACKAGE UPDATED---")
     pc = RTCPeerConnection()
     channel = pc.createDataChannel("my-data-channel")
     logging.info("channel(%s) %s" % (channel.label, "created by local party."))
@@ -162,7 +157,7 @@ async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = 
                         while channel.bufferedAmount is not None and channel.bufferedAmount > 16 * 1024 * 1024: # Wait if buffer >16MB 
                             await asyncio.sleep(0.1)
 
-                        # channel.send(chunk)
+                        channel.send(chunk)
 
                 channel.send("END_OF_FILE")
                 logging.info(f"File sent to worker.")
@@ -229,7 +224,7 @@ async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = 
                     while channel.bufferedAmount is not None and channel.bufferedAmount > 16 * 1024 * 1024: # Wait if buffer >16MB 
                         await asyncio.sleep(0.1)
 
-                    # channel.send(chunk)
+                    channel.send(chunk)
 
             channel.send("END_OF_FILE")
             logging.info(f"File sent to worker.")
@@ -263,6 +258,10 @@ async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = 
         global received_files
         
         if isinstance(message, str):
+            if message == b"KEEP_ALIVE":
+                    logging.info("Keep alive message received.")
+                    return
+            
             if message == "END_OF_FILE":
                 # File transfer complete, save to disk
                 file_name, file_data = list(received_files.items())[0]
@@ -307,6 +306,10 @@ async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = 
                 # await send_client_messages()
                 
         elif isinstance(message, bytes):
+            if message == b"KEEP_ALIVE":
+                logging.info("Keep alive message received.")
+                return
+
             file_name = list(received_files.keys())[0]
             if file_name not in received_files:
               received_files[file_name] = bytearray()
