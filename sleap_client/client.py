@@ -153,7 +153,7 @@ async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = 
                 file_size = os.path.getsize(file_path)
                 
                 # Send metadata first
-                channel.send(f"{file_name}:{file_size}")  
+                channel.send(f"FILE_META::{file_name}:{file_size}")  
 
                 # Send file in chunks (32 KB)
                 with open(file_path, "rb") as file:
@@ -266,16 +266,23 @@ async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = 
             if message == "END_OF_FILE":
                 # File transfer complete, save to disk
                 file_name, file_data = list(received_files.items())[0]
-                save_dir = QFileDialog.getExistingDirectory(
-                    None,
-                    f"Select directory to save received file: {file_name}",
-                    os.getcwd()
-                )
-                file_path = os.path.join(save_dir, file_name)
+                # save_dir = QFileDialog.getExistingDirectory(
+                #     None,
+                #     f"Select directory to save received file: {file_name}",
+                #     os.getcwd()
+                # )
                 
-                with open(file_path, "wb") as file:
-                    file.write(file_data)
-                logging.info(f"File saved as: {file_path}")
+                try: 
+                    os.makedirs(file_save_dir, exist_ok=True)
+                    file_path = os.path.join(file_save_dir, file_name)
+
+                    with open(file_path, "wb") as file:
+                        file.write(file_data)
+                    logging.info(f"File saved as: {file_path}") 
+                except PermissionError:
+                    logging.error(f"Permission denied when writing to: {file_save_dir}")
+                except Exception as e:
+                    logging.error(f"Failed to save file: {e}")
                 
                 received_files.clear()
 
@@ -289,11 +296,12 @@ async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = 
             elif message.startswith("FILE_META::"): # CHANGE THIS BC SOME MESSAGES CONTAIN ":"
                 # Metadata received (file name & size)
                 _, meta = message.split("FILE_META::", 1)
-                file_name, file_size = meta.split(":")
-                
+                file_name, file_size, file_save_dir = meta.split(":")
+
                 if file_name not in received_files:
                   received_files[file_name] = bytearray()  # Initialize as bytearray
-                logging.info(f"File name received: {file_name}, of size {file_size}")
+                logging.info(f"File name received: {file_name}, of size {file_size}, saving to {file_save_dir}")
+
             else:
                 logging.info(f"Worker sent: {message}")
                 # await send_client_messages()
