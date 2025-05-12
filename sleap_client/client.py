@@ -220,7 +220,7 @@ async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = 
             file_size = os.path.getsize(file_path)
             
             # Send metadata first
-            channel.send(f"{file_name}:{file_size}")  
+            channel.send(f"FILE_META::{file_name}:{file_size}")  
 
             # Send file in chunks (32 KB)
             with open(file_path, "rb") as file:
@@ -286,9 +286,11 @@ async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = 
                 else:
                     await clean_exit(pc, websocket)
 
-            elif ":" in message:
+            elif message.startswith("FILE_META::"): # CHANGE THIS BC SOME MESSAGES CONTAIN ":"
                 # Metadata received (file name & size)
-                file_name, file_size = message.split(":")
+                _, meta = message.split("FILE_META::", 1)
+                file_name, file_size = meta.split(":")
+                
                 if file_name not in received_files:
                   received_files[file_name] = bytearray()  # Initialize as bytearray
                 logging.info(f"File name received: {file_name}, of size {file_size}")
