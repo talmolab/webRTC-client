@@ -272,6 +272,7 @@ async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = 
                 # )
                 
                 try: 
+                    file_save_dir = "models"
                     os.makedirs(file_save_dir, exist_ok=True)
                     file_path = os.path.join(file_save_dir, file_name)
 
