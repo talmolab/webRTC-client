@@ -4,6 +4,10 @@ on:
   release:
     types: ["published"]
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   publish:
     name: uv build and PyPI Publish
@@ -33,4 +37,4 @@ jobs:
     
     - name: Upload to Test PyPI
       run: |
-        uv publish --index testpypi --token ${{ secrets.UV_PYPI_TOKEN }}
+        uv publish --index testpypi --trusted-publishing always
