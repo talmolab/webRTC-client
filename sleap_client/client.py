@@ -1,13 +1,11 @@
 import asyncio
 import argparse
-import sys
 import websockets
 import json
 import logging
 import os
 
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
-from websockets import WebSocketClientProtocol
 
 # setup logging
 logging.basicConfig(level=logging.INFO)
@@ -50,25 +48,25 @@ async def handle_connection(pc: RTCPeerConnection, websocket):
 
             # 1. receive answer SDP from worker and set it as this peer's remote description
             if data.get('type') == 'answer':
-                print(f"Received answer from worker: {data}")
+                logging.info(f"Received answer from worker: {data}")
 
                 await pc.setRemoteDescription(RTCSessionDescription(sdp=data.get('sdp'), type=data.get('type')))
 
             # 2. to handle "trickle ICE" for non-local ICE candidates (might be unnecessary)
             elif data.get('type') == 'candidate':
-                print("Received ICE candidate")
+                logging.info("Received ICE candidate")
                 candidate = data.get('candidate')
                 await pc.addIceCandidate(candidate)
 
             elif data.get('type') == 'quit': # NOT initiator, received quit request from worker
-                print("Worker has quit. Closing connection...")
+                logging.info("Worker has quit. Closing connection...")
                 await clean_exit(pc, websocket)
                 break
 
             # 3. error handling
             else:
-                logging.DEBUG(f"Unhandled message: {data}")
-                logging.DEBUG("exiting...")
+                logging.debug(f"Unhandled message: {data}")
+                logging.debug("exiting...")
                 break
     
     except json.JSONDecodeError:
@@ -78,7 +76,7 @@ async def handle_connection(pc: RTCPeerConnection, websocket):
         logging.DEBUG(f"Error handling message: {e}")
 
 
-async def run_client(pc, peer_id: str, DNS: str, port_number: str):
+async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = None, CLI: bool = True):
     """Sends initial SDP offer to worker peer and establishes both connection & datachannel to be used by both parties.
 	
 		Initializes websocket to select worker peer and sends datachannel object to worker.
@@ -94,6 +92,8 @@ async def run_client(pc, peer_id: str, DNS: str, port_number: str):
 		Exception: An error occurred while running the client
     """
 
+    logging.info("---PIP PACKAGE UPDATED---")
+    pc = RTCPeerConnection()
     channel = pc.createDataChannel("my-data-channel")
     logging.info("channel(%s) %s" % (channel.label, "created by local party."))
 
@@ -147,13 +147,13 @@ async def run_client(pc, peer_id: str, DNS: str, port_number: str):
                 file_size = os.path.getsize(file_path)
                 
                 # Send metadata first
-                channel.send(f"{file_name}:{file_size}")  
+                channel.send(f"FILE_META::{file_name}:{file_size}")  
 
                 # Send file in chunks (32 KB)
                 with open(file_path, "rb") as file:
                     logging.info(f"File opened: {file_path}")
                     while chunk := file.read(CHUNK_SIZE):
-                        while channel.bufferedAmount > 16 * 1024 * 1024: # Wait if buffer >16MB 
+                        while channel.bufferedAmount is not None and channel.bufferedAmount > 16 * 1024 * 1024: # Wait if buffer >16MB 
                             await asyncio.sleep(0.1)
 
                         channel.send(chunk)
@@ -182,6 +182,54 @@ async def run_client(pc, peer_id: str, DNS: str, port_number: str):
         #   logging.info(f"File sent to worker.")
 
 
+    async def send_client_file():
+        """Handles direct, one-way file transfer from client to be sent to worker peer.
+        
+		  Takes file from client and sends it to worker peer via datachannel. Doesn't require typed responses.
+	
+        Args:
+			None
+        
+		Returns:
+			None
+        
+        """
+        
+        if channel.readyState != "open":
+            logging.info(f"Data channel not open. Ready state is: {channel.readyState}")
+            return 
+
+        logging.info(f"Given file path {file_path}")
+        if not file_path:
+            logging.info("No file path entered.")
+            return
+        if not os.path.exists(file_path):
+            logging.info("File does not exist.")
+            return
+        else: 
+            logging.info(f"Sending {file_path} to worker...")
+
+            # Obtain metadata
+            file_name = os.path.basename(file_path)
+            file_size = os.path.getsize(file_path)
+            
+            # Send metadata first
+            channel.send(f"FILE_META::{file_name}:{file_size}")  
+
+            # Send file in chunks (32 KB)
+            with open(file_path, "rb") as file:
+                logging.info(f"File opened: {file_path}")
+                while chunk := file.read(CHUNK_SIZE):
+                    while channel.bufferedAmount is not None and channel.bufferedAmount > 16 * 1024 * 1024: # Wait if buffer >16MB 
+                        await asyncio.sleep(0.1)
+
+                    channel.send(chunk)
+
+            channel.send("END_OF_FILE")
+            logging.info(f"File sent to worker.")
+            
+        return
+
     @channel.on("open")
     async def on_channel_open():
         """Event handler function for when the datachannel is open.
@@ -194,7 +242,11 @@ async def run_client(pc, peer_id: str, DNS: str, port_number: str):
 
         asyncio.create_task(keep_ice_alive(channel))
         logging.info(f"{channel.label} is open")
-        await send_client_messages()
+        
+        if CLI:
+            await send_client_messages()
+        else:
+            await send_client_file()
     
 
     @channel.on("message")
@@ -205,50 +257,87 @@ async def run_client(pc, peer_id: str, DNS: str, port_number: str):
         global received_files
         
         if isinstance(message, str):
+            if message == b"KEEP_ALIVE":
+                    logging.info("Keep alive message received.")
+                    return
+            
             if message == "END_OF_FILE":
                 # File transfer complete, save to disk
                 file_name, file_data = list(received_files.items())[0]
-                file_path = os.path.join(SAVE_DIR, file_name)
+                # save_dir = QFileDialog.getExistingDirectory(
+                #     None,
+                #     f"Select directory to save received file: {file_name}",
+                #     os.getcwd()
+                # )
                 
-                with open(file_path, "wb") as file:
-                    file.write(file_data)
-                logging.info(f"File saved as: {file_path}")
+                try: 
+                    file_save_dir = "models"
+                    os.makedirs(file_save_dir, exist_ok=True)
+                    file_path = os.path.join(file_save_dir, file_name)
+
+                    with open(file_path, "wb") as file:
+                        file.write(file_data)
+                    logging.info(f"File saved as: {file_path}") 
+                except PermissionError:
+                    logging.error(f"Permission denied when writing to: {file_save_dir}")
+                except Exception as e:
+                    logging.error(f"Failed to save file: {e}")
                 
                 received_files.clear()
-                await send_client_messages()
-            elif ":" in message:
+
+                if CLI:
+                    # Prompt for next message
+                    logging.info("File transfer complete. Enter next message:")
+                    await send_client_messages()
+                else:
+                    await clean_exit(pc, websocket)
+
+            elif "FILE_META::" in message: 
                 # Metadata received (file name & size)
-                file_name, file_size = message.split(":")
-                received_files[file_name] = bytearray()
-                logging.info(f"File name received: {file_name}, of size {file_size}")
+                _, meta = message.split("FILE_META::", 1)
+                file_name, file_size, file_save_dir = meta.split(":")
+
+                if file_name not in received_files:
+                    received_files[file_name] = bytearray()  # Initialize as bytearray
+                logging.info(f"File name received: {file_name}, of size {file_size}, saving to {file_save_dir}")
+
             else:
                 logging.info(f"Worker sent: {message}")
-                await send_client_messages()
+                # await send_client_messages()
                 
         elif isinstance(message, bytes):
+            if message == b"KEEP_ALIVE":
+                logging.info("Keep alive message received.")
+                return
+
             file_name = list(received_files.keys())[0]
-            received_files.get(file_name).extend(message)
+            if file_name not in received_files:
+              received_files[file_name] = bytearray()
+            received_files[file_name].extend(message)
                 
         # await send_client_messages()
 
 
-    @pc.on("iceconnectionstatechange")
+    # @pc.on("iceconnectionstatechange")
     async def on_iceconnectionstatechange():
         logging.info(f"ICE connection state is now {pc.iceConnectionState}")
         if pc.iceConnectionState in ["connected", "completed"]:
             logging.info("ICE connection established.")
             # connected_event.set()
         elif pc.iceConnectionState in ["failed", "disconnected"]:
-            logging.info("ICE connection failed/disconnected. Closing connection.")
+            logging.warning("ICE connection failed/disconnected. Closing connection...")
             await clean_exit(pc, websocket)
             return
         elif pc.iceConnectionState == "closed":
             logging.info("ICE connection closed.")
             await clean_exit(pc, websocket)
             return
+        
+    # Register the event handler explicitly
+    pc.on("iceconnectionstatechange", on_iceconnectionstatechange)
 
 
-    # 1. client registers with the signaling server (temp: localhost:8080) via websocket connection
+    # 1. client registers with the signaling server via websocket connection
     # this is how the client will know the worker peer exists
     async with websockets.connect(f"{DNS}:{port_number}") as websocket:
         # 1a. register the client with the signaling server
@@ -282,28 +371,26 @@ async def run_client(pc, peer_id: str, DNS: str, port_number: str):
     
 
 def entrypoint():
-    """Main function to run the client.
+    """Main CLI function to run the client.
       Args:
         None
       Returns:
         None
     """
     parser = argparse.ArgumentParser(description="SLEAP webRTC Client")
-    pc = RTCPeerConnection()
 
-    parser.add_argument("--server", type=str, default="ws://ec2-54-158-36-90.compute-1.amazonaws.com", help="WebSocket server DNS/address, ex. 'ws://ec2-54-158-36-90.compute-1.amazonaws.com'")
+    parser.add_argument("--server", type=str, default="ws://ec2-54-153-105-27.us-west-1.compute.amazonaws.com", help="WebSocket server DNS/address, ex. 'ws://ec2-54-158-36-90.compute-1.amazonaws.com'")
     parser.add_argument("--port", type=int, default=8080, help="WebSocket server port number, ex. '8080'")
+    parser.add_argument("--peer_id", type=str, default="client1", help="Unique identifier for the client")
 
     args = parser.parse_args()
 
     DNS = args.server
     port_number = args.port
-
-    # DNS = sys.argv[1] if len(sys.argv) > 1 else "ws://ec2-3-80-210-101.compute-1.amazonaws.com"
-    # port_number = sys.argv[2] if len(sys.argv) > 1 else 8080
+    peer_id = args.peer_id
 
     try: 
-        asyncio.run(run_client(pc, "client1", DNS, port_number))
+        asyncio.run(run_client(peer_id, DNS, port_number, file_path=None, CLI=True))
     except KeyboardInterrupt:
         logging.info("KeyboardInterrupt: Exiting...")
     finally:

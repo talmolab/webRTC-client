@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sleap_client"
-version = "0.0.1a1"
+version = "0.0.2a0"
 authors = [
   { name="Amick Licup", email="alicup@ucsd.edu" }
 ]
 description = "webRTC client for file transfer & SLEAP training."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.9"
 keywords = ["sleap", "webRTC", "client", "file", "training"]
 classifiers = [
   "Programming Language :: Python :: 3",
@@ -32,7 +32,23 @@ dev = [
   "toml",
   "twine",
   "build",
+  "pytest",
+  "pytest-asyncio",
+  "coverage",
+  "pytest-cov",
 ]
 
 [project.scripts]
 sleap-client = "sleap_client.client:entrypoint" # CLI entry point
+
+[tool.pytest.ini_options]
+markers = [
+    "asyncio: mark test to be run asynchronously with pytest-asyncio"
+]
+asyncio_mode = "auto"
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+explicit = true
