@@ -10,12 +10,14 @@ from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
 # setup logging
 logging.basicConfig(level=logging.INFO)
 
-# global variables
+# global constants
 CHUNK_SIZE = 64 * 1024
+MAX_RECONNECT_ATTEMPTS = 5
 
 # directory to save files received from client
-SAVE_DIR = "results"
 received_files = {}
+target_worker = None
+reconnect_attempts = 0
 
 async def clean_exit(pc, websocket):
     logging.info("Closing WebRTC connection...")
@@ -25,6 +27,33 @@ async def clean_exit(pc, websocket):
     await websocket.close()
 
     logging.info("Client shutdown complete. Exiting...")
+
+
+async def reconnect(pc, websocket):
+    global reconnect_attempts
+    if reconnect_attempts >= MAX_RECONNECT_ATTEMPTS:
+        logging.error("Max ICE reconnection attempts reached. Giving up.")
+        await clean_exit(pc, websocket)
+        return
+
+    reconnect_attempts += 1
+    logging.info(f"Reconnection attempt {reconnect_attempts}/{MAX_RECONNECT_ATTEMPTS}")
+
+    # Create new offer with ICE restart flag
+    logging.info("Creating new offer with ICE restart...")
+    await pc.setLocalDescription(await pc.createOffer(iceRestart=True))
+
+    # Send new offer to the worker via signaling
+    logging.info(f"Sending new offer to worker: {target_worker}")
+    await websocket.send(json.dumps({
+        'type': pc.localDescription.type,
+        'target': target_worker,
+        'sdp': pc.localDescription.sdp
+    }))
+
+    # Clear received files on reconnection
+    logging.info("Clearing received files on reconnection...")
+    received_files.clear()  
 
 
 async def handle_connection(pc: RTCPeerConnection, websocket):
@@ -91,8 +120,9 @@ async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = 
     Raises:
 		Exception: An error occurred while running the client
     """
+    global reconnect_attempts
 
-    logging.info("---PIP PACKAGE UPDATED---")
+    reconnect_attempts = 0
     pc = RTCPeerConnection()
     channel = pc.createDataChannel("my-data-channel")
     logging.info("channel(%s) %s" % (channel.label, "created by local party."))
@@ -321,13 +351,22 @@ async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = 
     # @pc.on("iceconnectionstatechange")
     async def on_iceconnectionstatechange():
         logging.info(f"ICE connection state is now {pc.iceConnectionState}")
+
         if pc.iceConnectionState in ["connected", "completed"]:
+            reconnect_attempts = 0
             logging.info("ICE connection established.")
-            # connected_event.set()
+            logging.info(f"reconnect attempts reset to {reconnect_attempts}")
+
         elif pc.iceConnectionState in ["failed", "disconnected"]:
-            logging.warning("ICE connection failed/disconnected. Closing connection...")
-            await clean_exit(pc, websocket)
-            return
+            logging.warning("ICE connection failed/disconnected. Attempting reconnect...")
+
+            if target_worker is None:
+                logging.info(f"No target worker available for reconnection. target_worker is {target_worker}.")
+                await clean_exit(pc, websocket)
+                return
+            
+            await reconnect(pc, websocket)
+
         elif pc.iceConnectionState == "closed":
             logging.info("ICE connection closed.")
             await clean_exit(pc, websocket)
