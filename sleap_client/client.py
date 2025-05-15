@@ -1,6 +1,5 @@
 import asyncio
 import argparse
-import sys
 import websockets
 import json
 import logging
@@ -326,7 +325,7 @@ async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = 
             logging.info("ICE connection established.")
             # connected_event.set()
         elif pc.iceConnectionState in ["failed", "disconnected"]:
-            logging.info("ICE connection failed/disconnected. Closing connection.")
+            logging.warning("ICE connection failed/disconnected. Closing connection...")
             await clean_exit(pc, websocket)
             return
         elif pc.iceConnectionState == "closed":
