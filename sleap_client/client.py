@@ -13,10 +13,12 @@ logging.basicConfig(level=logging.INFO)
 # global constants
 CHUNK_SIZE = 64 * 1024
 MAX_RECONNECT_ATTEMPTS = 5
+RETRY_DELAY = 5  # seconds
 
 # directory to save files received from client
 received_files = {}
 target_worker = None
+reconnecting = False
 reconnect_attempts = 0
 
 async def clean_exit(pc, websocket):
@@ -31,29 +33,45 @@ async def clean_exit(pc, websocket):
 
 async def reconnect(pc, websocket):
     global reconnect_attempts
-    if reconnect_attempts >= MAX_RECONNECT_ATTEMPTS:
-        logging.error("Max ICE reconnection attempts reached. Giving up.")
-        await clean_exit(pc, websocket)
-        return
+    while reconnect_attempts <= MAX_RECONNECT_ATTEMPTS:
+        try:
+            reconnect_attempts += 1
+            logging.info(f"Reconnection attempt {reconnect_attempts}/{MAX_RECONNECT_ATTEMPTS}...")
 
-    reconnect_attempts += 1
-    logging.info(f"Reconnection attempt {reconnect_attempts}/{MAX_RECONNECT_ATTEMPTS}")
+            # Create new offer with ICE restart flag
+            logging.info("Creating new offer with manual ICE restart...")
+            await pc.setLocalDescription(await pc.createOffer())
 
-    # Create new offer with ICE restart flag
-    logging.info("Creating new offer with ICE restart...")
-    await pc.setLocalDescription(await pc.createOffer(iceRestart=True))
+            # Send new offer to the worker via signaling
+            logging.info(f"Sending new offer to worker: {target_worker}")
+            await websocket.send(json.dumps({
+                'type': pc.localDescription.type,
+                'target': target_worker,
+                'sdp': pc.localDescription.sdp
+            }))
 
-    # Send new offer to the worker via signaling
-    logging.info(f"Sending new offer to worker: {target_worker}")
-    await websocket.send(json.dumps({
-        'type': pc.localDescription.type,
-        'target': target_worker,
-        'sdp': pc.localDescription.sdp
-    }))
+            # Wait for connection to complete
+            for _ in range(30):
+                await asyncio.sleep(1)
+                if pc.iceConnectionState in ["connected", "completed"]:
+                    logging.info("Reconnection successful.")
 
-    # Clear received files on reconnection
-    logging.info("Clearing received files on reconnection...")
-    received_files.clear()  
+                    # Clear received files on reconnection
+                    logging.info("Clearing received files on reconnection...")
+                    received_files.clear()  
+
+                    return True
+
+            logging.warning("Reconnection timed out. Retrying...")
+    
+        except Exception as e:
+            logging.error(f"Reconnection failed with error: {e}")
+
+        await asyncio.sleep(RETRY_DELAY)
+    
+    logging.error("Maximum reconnection attempts reached. Exiting...")
+    await clean_exit(pc, websocket)
+    return False
 
 
 async def handle_connection(pc: RTCPeerConnection, websocket):
@@ -73,6 +91,9 @@ async def handle_connection(pc: RTCPeerConnection, websocket):
 
     try:
         async for message in websocket:
+            if type(message) == int:
+                logging.info(f"Received int message: {message}")
+
             data = json.loads(message)
 
             # 1. receive answer SDP from worker and set it as this peer's remote description
@@ -350,6 +371,7 @@ async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = 
 
     # @pc.on("iceconnectionstatechange")
     async def on_iceconnectionstatechange():
+        global reconnecting
         logging.info(f"ICE connection state is now {pc.iceConnectionState}")
 
         if pc.iceConnectionState in ["connected", "completed"]:
@@ -357,20 +379,27 @@ async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = 
             logging.info("ICE connection established.")
             logging.info(f"reconnect attempts reset to {reconnect_attempts}")
 
-        elif pc.iceConnectionState in ["failed", "disconnected"]:
-            logging.warning("ICE connection failed/disconnected. Attempting reconnect...")
+        elif pc.iceConnectionState in ["failed", "disconnected", "closed"] and not reconnecting:
+            logging.warning(f"ICE connection {pc.iceConnectionState}. Attempting reconnect...")
+            reconnecting = True
 
             if target_worker is None:
                 logging.info(f"No target worker available for reconnection. target_worker is {target_worker}.")
                 await clean_exit(pc, websocket)
                 return
             
-            await reconnect(pc, websocket)
+            reconnection_success = await reconnect(pc, websocket)
+            reconnecting = False
+            if not reconnection_success:
+                logging.info("Reconnection failed. Closing connection...")
+                await clean_exit(pc, websocket)
+                return
 
-        elif pc.iceConnectionState == "closed":
-            logging.info("ICE connection closed.")
-            await clean_exit(pc, websocket)
-            return
+
+        # elif pc.iceConnectionState == "closed":
+        #     logging.info("ICE connection closed.")
+        #     await clean_exit(pc, websocket)
+        #     return
         
     # Register the event handler explicitly
     pc.on("iceconnectionstatechange", on_iceconnectionstatechange)
