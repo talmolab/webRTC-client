@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sleap_client"
-version = "0.0.2a0"
+version = "0.0.2a3"
 authors = [
   { name="Amick Licup", email="alicup@ucsd.edu" }
 ]
