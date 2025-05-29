@@ -126,7 +126,14 @@ async def handle_connection(pc: RTCPeerConnection, websocket):
         logging.DEBUG(f"Error handling message: {e}")
 
 
-async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = None, CLI: bool = True):
+async def run_client(
+        peer_id: str, 
+        DNS: str, 
+        port_number: str, 
+        file_path: str = None, 
+        CLI: bool = True,
+        output_dir: str = "" 
+    ):
     """Sends initial SDP offer to worker peer and establishes both connection & datachannel to be used by both parties.
 	
 		Initializes websocket to select worker peer and sends datachannel object to worker.
@@ -260,14 +267,17 @@ async def run_client(peer_id: str, DNS: str, port_number: str, file_path: str = 
         else: 
             logging.info(f"Sending {file_path} to worker...")
 
-            # Obtain metadata
+            # Send output directory.
+            channel.send(f"OUTPUT_DIR::{output_dir}")
+
+            # Obtain metadata.
             file_name = os.path.basename(file_path)
             file_size = os.path.getsize(file_path)
             
-            # Send metadata first
+            # Send metadata first.
             channel.send(f"FILE_META::{file_name}:{file_size}")  
 
-            # Send file in chunks (32 KB)
+            # Send file in chunks (32 KB).
             with open(file_path, "rb") as file:
                 logging.info(f"File opened: {file_path}")
                 while chunk := file.read(CHUNK_SIZE):
