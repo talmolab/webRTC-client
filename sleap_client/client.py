@@ -6,6 +6,7 @@ import logging
 import os
 
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
+from websockets.client import ClientConnection
 
 # setup logging
 logging.basicConfig(level=logging.INFO)
@@ -21,7 +22,7 @@ target_worker = None
 reconnecting = False
 reconnect_attempts = 0
 
-async def clean_exit(pc, websocket):
+async def clean_exit(pc: RTCPeerConnection, websocket: ClientConnection):
     logging.info("Closing WebRTC connection...")
     await pc.close()
 
@@ -31,7 +32,7 @@ async def clean_exit(pc, websocket):
     logging.info("Client shutdown complete. Exiting...")
 
 
-async def reconnect(pc, websocket):
+async def reconnect(pc: RTCPeerConnection, websocket: ClientConnection):
     global reconnect_attempts
     while reconnect_attempts <= MAX_RECONNECT_ATTEMPTS:
         try:
@@ -74,7 +75,7 @@ async def reconnect(pc, websocket):
     return False
 
 
-async def handle_connection(pc: RTCPeerConnection, websocket):
+async def handle_connection(pc: RTCPeerConnection, websocket: ClientConnection):
     """Handles receiving SDP answer from Worker and ICE candidates from Worker.
 
     Args:
@@ -155,7 +156,7 @@ async def run_client(
     channel = pc.createDataChannel("my-data-channel")
     logging.info("channel(%s) %s" % (channel.label, "created by local party."))
 
-    async def keep_ice_alive(channel):
+    async def keep_ice_alive(channel: RTCDataChannel):
         while True:
             await asyncio.sleep(15)
             if channel.readyState == "open":
@@ -311,7 +312,7 @@ async def run_client(
     
 
     @channel.on("message")
-    async def on_message(message):
+    async def on_message(message: str | bytes):
         logging.info(f"Client received: {message}")
         
 		# global received_files dictionary
