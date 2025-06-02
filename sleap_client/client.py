@@ -157,7 +157,7 @@ async def run_client(
         peer_id: str, 
         DNS: str, 
         port_number: str, 
-        file_path: str, 
+        file_path: str = None, 
         CLI: bool = True,
         output_dir: str = "" 
     ):
@@ -300,7 +300,7 @@ async def run_client(
             file_name = os.path.basename(file_path)
             file_size = os.path.getsize(file_path)
             
-            # Send metadata first.
+            # Send metadata next.
             channel.send(f"FILE_META::{file_name}:{file_size}")  
 
             # Send file in chunks (32 KB).
@@ -340,7 +340,7 @@ async def run_client(
     
 
     @channel.on("message")
-    async def on_message(message: str | bytes):
+    async def on_message(message):
         """
         Event handler function for when a message is received on the datachannel from Worker.
 
@@ -410,8 +410,6 @@ async def run_client(
 
 
     # @pc.on("iceconnectionstatechange")
-    # Register the event handler explicitly
-    pc.on("iceconnectionstatechange", on_iceconnectionstatechange)
     async def on_iceconnectionstatechange():
         """
         Event handler function for when the ICE connection state changes.
@@ -446,10 +444,10 @@ async def run_client(
                 logging.info("Reconnection failed. Closing connection...")
                 await clean_exit(pc, websocket)
                 return
-
-        else:
-            await clean_exit(pc, websocket)
-            return
+            
+        
+    # Register the event handler explicitly
+    pc.on("iceconnectionstatechange", on_iceconnectionstatechange)
     
 
     # Initate the WebSocket connection to the signaling server.
@@ -482,8 +480,8 @@ async def run_client(
         await handle_connection(pc, websocket)
 
     # Exit.
-    await clean_exit(pc, websocket)
-    
+    await pc.close()
+    await websocket.close()
 
 def entrypoint():
     """Main CLI function to run the client.
