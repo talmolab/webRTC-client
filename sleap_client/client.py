@@ -25,8 +25,7 @@ output_dir = ""
 
 
 async def clean_exit(pc: RTCPeerConnection, websocket: ClientConnection):
-    """
-    Cleans up the client connection and closes the peer connection and websocket.
+    """Cleans up the client connection and closes the peer connection and websocket.
     
     Args:
         pc: RTCPeerConnection object
@@ -45,8 +44,7 @@ async def clean_exit(pc: RTCPeerConnection, websocket: ClientConnection):
 
 
 async def reconnect(pc: RTCPeerConnection, websocket: ClientConnection):
-    """
-    Attempts to reconnect the client to the worker peer by creating a new offer with ICE restart flag.
+    """Attempts to reconnect the client to the worker peer by creating a new offer with ICE restart flag.
 
     Args:
         pc: RTCPeerConnection object
@@ -105,10 +103,8 @@ async def handle_connection(pc: RTCPeerConnection, websocket: ClientConnection):
     Args:
         pc: RTCPeerConnection object
         websocket: websocket connection object 
-    
     Returns:
 		None
-        
     Raises:
 		JSONDecodeError: Invalid JSON received
 		Exception: An error occurred while handling the message
@@ -161,8 +157,7 @@ async def run_client(
         CLI: bool = True,
         output_dir: str = "" 
     ):
-    """
-    Sends initial SDP offer to worker peer and establishes both connection & datachannel to be used by both parties.
+    """Sends initial SDP offer to worker peer and establishes both connection & datachannel to be used by both parties.
 	
     Args:
 		peer_id: Unique str identifier for client
@@ -186,8 +181,7 @@ async def run_client(
     logging.info("channel(%s) %s" % (channel.label, "created by local party."))
 
     async def keep_ice_alive(channel: RTCDataChannel):
-        """
-        Sends periodic keep-alive messages to the worker peer to maintain the connection.
+        """Sends periodic keep-alive messages to the worker peer to maintain the connection.
 
         Args:
             channel: RTCDataChannel object
@@ -202,9 +196,7 @@ async def run_client(
 
 
     async def send_client_messages():
-        """
-		Takes input from client and sends it to worker peer via datachannel. Additionally, prompts for file upload to be sent to worker.
-        
+        """Takes input/file from client and sends it to worker peer via datachannel.
         Args:
             None
         Returns:
@@ -268,8 +260,7 @@ async def run_client(
 
 
     async def send_client_file():
-        """
-		Handles direct, one-way file transfer from client to be sent to worker peer.
+        """Handles direct, one-way file transfer from client to be sent to worker peer.
 
         Args:
 			None
@@ -319,8 +310,7 @@ async def run_client(
 
     @channel.on("open")
     async def on_channel_open():
-        """
-        Event handler function for when the datachannel is open.
+        """Event handler function for when the datachannel is open.
 
         Args:
 			None
@@ -341,8 +331,7 @@ async def run_client(
 
     @channel.on("message")
     async def on_message(message):
-        """
-        Event handler function for when a message is received on the datachannel from Worker.
+        """Event handler function for when a message is received on the datachannel from Worker.
 
         Args:
             message: The received message, either as a string or bytes.
@@ -411,8 +400,8 @@ async def run_client(
 
     # @pc.on("iceconnectionstatechange")
     async def on_iceconnectionstatechange():
-        """
-        Event handler function for when the ICE connection state changes.
+        """Event handler function for when the ICE connection state changes.
+
         Args:
             None
         Returns:
