@@ -7,6 +7,11 @@ import os
 
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
 from websockets.client import ClientConnection
+from sleap.gui.widgets.monitor import LossViewer
+from sleap.gui.widgets.imagedir import QtImageDirectoryWidget
+from sleap.gui.learning.configs import ConfigFileInfo
+from sleap.nn.config.training_job import TrainingJobConfig
+from qtpy import QtWidgets
 
 # Setup logging.
 logging.basicConfig(level=logging.INFO)
@@ -22,6 +27,7 @@ target_worker = None
 reconnecting = False
 reconnect_attempts = 0
 output_dir = ""
+win = None
 
 
 async def clean_exit(pc: RTCPeerConnection, websocket: ClientConnection):
@@ -155,7 +161,10 @@ async def run_client(
         port_number: str, 
         file_path: str = None, 
         CLI: bool = True,
-        output_dir: str = "" 
+        output_dir: str = "",
+        config_filename: TrainingJobConfig = None, 
+        cfg_head_name: str = None,
+        loss_viewer: LossViewer = None # MUST INITIALIZE LOSS VIEWER FOR WINDOW
     ):
     """Sends initial SDP offer to worker peer and establishes both connection & datachannel to be used by both parties.
 	
@@ -172,6 +181,7 @@ async def run_client(
 
     # Initialize global variables
     global reconnect_attempts
+    global win
     output_dir = output_dir
 
     # Initalize peer connection and data channel.
@@ -179,6 +189,11 @@ async def run_client(
     pc = RTCPeerConnection()
     channel = pc.createDataChannel("my-data-channel")
     logging.info("channel(%s) %s" % (channel.label, "created by local party."))
+
+    # Initialize LossViewer RTC data channel event handlers .
+    logging.info("Setting up RTC data channel for LossViewer...")
+    loss_viewer.set_rtc_channel(channel)
+    win = loss_viewer
 
     async def keep_ice_alive(channel: RTCDataChannel):
         """Sends periodic keep-alive messages to the worker peer to maintain the connection.
@@ -321,7 +336,12 @@ async def run_client(
         # Initiate keep-alive task.
         asyncio.create_task(keep_ice_alive(channel))
         logging.info(f"{channel.label} is open")
-        
+
+        # Setup monitor window for progress reports.
+        # zmq_ports = dict()
+        # zmq_ports["controller_port"] = 9000
+        # zmq_ports["publish_port"] = 9001
+
         # Prompt for messages or file upload.
         if CLI:
             await send_client_messages()
@@ -343,6 +363,7 @@ async def run_client(
         logging.info(f"Client received: {message}")
         global received_files
         global output_dir
+        global win
         
         # Handle string and bytes messages differently.
         if isinstance(message, str):
@@ -353,7 +374,7 @@ async def run_client(
             if message == "END_OF_FILE":
                 # File transfer complete, save to disk.
                 file_name, file_data = list(received_files.items())[0]
-                
+
                 try: 
                     os.makedirs(output_dir, exist_ok=True)
                     file_path = os.path.join(output_dir, file_name)
@@ -368,12 +389,46 @@ async def run_client(
                 
                 received_files.clear()
 
+                # Update monitor window with file transfer and training completion.
+                win.close()
+
                 if CLI:
                     # Prompt for next message
                     logging.info("File transfer complete. Enter next message:")
                     await send_client_messages()
                 else:
                     await clean_exit(pc, websocket)
+
+            elif "PROGRESS_REPORT::" in message:
+                # Progress report received from worker.
+                logging.info(message)
+                _, progress = message.split("PROGRESS_REPORT::", 1)
+                
+                # Update LossViewer window with received progress report.
+                if win:
+                    win._check_messages(
+                        # Progress should be result from jsonpickle.decode(msg_str)
+                        rtc_msg=progress 
+                    )
+                else:
+                    logging.info(f"No monitor window available! win is {win}")
+
+                # print("Resetting monitor window.")
+                # plateau_patience = config_info.optimization.early_stopping.plateau_patience
+                # plateau_min_delta = config_info.optimization.early_stopping.plateau_min_delta
+                # win.reset(
+                #     what=str(model_type),
+                #     plateau_patience=plateau_patience,
+                #     plateau_min_delta=plateau_min_delta,
+                # )
+                # win.setWindowTitle(f"Training Model - {str(model_type)}")
+                # win.set_message(f"Preparing to run training...")
+                # if save_viz:
+                #     viz_window = QtImageDirectoryWidget.make_training_vizualizer(
+                #         job.outputs.run_path
+                #     )
+                #     viz_window.move(win.x() + win.width() + 20, win.y())
+                #     win.on_epoch.connect(viz_window.poll)
 
             elif "FILE_META::" in message: 
                 # Metadata received (file name & size)
@@ -391,6 +446,20 @@ async def run_client(
             if message == b"KEEP_ALIVE":
                 logging.info("Keep alive message received.")
                 return
+            
+            elif b"PROGRESS_REPORT::" in message:
+                # Progress report received from worker.
+                logging.info(message.decode())
+                _, progress = message.decode().split("PROGRESS_REPORT::", 1)
+                
+                # Update LossViewer window with received progress report.
+                if win:
+                    win._check_messages(
+                        # Progress should be result from jsonpickle.decode(msg_str)
+                        rtc_msg=progress 
+                    )
+                else:
+                    logging.info(f"No monitor window available! win is {win}")
 
             file_name = list(received_files.keys())[0]
             if file_name not in received_files:
