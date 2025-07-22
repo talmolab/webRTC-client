@@ -6,12 +6,13 @@ import logging
 import os
 
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
-from websockets.client import ClientConnection
+from functools import partial
+from qtpy import QtCore
 from sleap.gui.widgets.monitor import LossViewer
 from sleap.gui.widgets.imagedir import QtImageDirectoryWidget
 from sleap.gui.learning.configs import ConfigFileInfo
 from sleap.nn.config.training_job import TrainingJobConfig
-from qtpy import QtWidgets
+from websockets.client import ClientConnection
 
 # Setup logging.
 logging.basicConfig(level=logging.INFO)
@@ -406,10 +407,11 @@ async def run_client(
                 
                 # Update LossViewer window with received progress report.
                 if win:
-                    win._check_messages(
-                        # Progress should be result from jsonpickle.decode(msg_str)
-                        rtc_msg=progress 
-                    )
+                    QtCore.QTimer.singleShot(0, partial(win._check_messages, rtc_msg=progress))
+                    # win._check_messages(
+                    #     # Progress should be result from jsonpickle.decode(msg_str)
+                    #     rtc_msg=progress 
+                    # )
                 else:
                     logging.info(f"No monitor window available! win is {win}")
 
@@ -438,6 +440,13 @@ async def run_client(
                 if file_name not in received_files:
                     received_files[file_name] = bytearray()  # Initialize as bytearray
                 logging.info(f"File name received: {file_name}, of size {file_size}, saving to {output_dir}")
+
+            elif "ZMQ_CTRL::" in message:
+                # ZMQ control message received.
+                _, zmq_ctrl = message.split("ZMQ_CTRL::", 1)
+                
+                if zmq_ctrl == "STOP":
+                    win.reset()
 
             else:
                 logging.info(f"Worker sent: {message}")
