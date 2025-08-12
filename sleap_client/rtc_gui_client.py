@@ -1,5 +1,8 @@
 import asyncio
 import argparse
+import base64
+import uuid
+import requests
 import websockets
 import json
 import jsonpickle
@@ -27,7 +30,7 @@ RETRY_DELAY = 5  # seconds
 class RTCGUIClient:
     def __init__(
         self, 
-        peer_id: str = "client1",
+        peer_id: str = f"client-{uuid.uuid4()}",
         DNS: str = "ws://ec2-54-176-92-10.us-west-1.compute.amazonaws.com",
         port_number: str = "8080",
     ):
@@ -48,7 +51,88 @@ class RTCGUIClient:
         self.reconnecting = False
 
 
-    def start_zmq_control(self, zmq_address: str = "tcp://127.0.0.1:9001"):
+    def parse_session_string(self, session_string: str):
+        prefix = "sleap-session:"
+        if not session_string.startswith(prefix):
+            raise ValueError(f"Session string must start with '{prefix}'")
+        
+        encoded = session_string[len(prefix):]
+        try:
+            json_str = base64.urlsafe_b64decode(encoded).decode()
+            data = json.loads(json_str)
+            return {
+                "room_id": data.get("r"),
+                "token": data.get("t"),
+                "peer_id": data.get("p"),
+            }
+        except jsonpickle.UnpicklingError as e:
+            raise ValueError(f"Failed to decode session string: {e}")
+
+
+    def request_anonymous_signin(self) -> str:
+        """Request an anonymous token from Signaling Server."""
+
+        url = "http://ec2-54-176-92-10.us-west-1.compute.amazonaws.com:8001/anonymous-signin"
+        response = requests.post(url)
+
+        if response.status_code != 200:
+            return response.json()['id_token']
+        else:
+            logging.error(f"Failed to get anonymous token: {response.text}")
+            return None
+        
+    
+    async def start_zmq_listener(self, channel: RTCDataChannel, zmq_address: str = "tcp://127.0.0.1:9000"):
+        """Starts a ZMQ ctrl SUB socket to listen for ZMQ commands from the LossViewer.
+        
+        Args:
+            channel: The RTCDataChannel to send progress reports to.
+            zmq_address: Address of the ZMQ socket to connect to.
+        Returns:
+            None
+        """
+        # Use LossViewer's already initialized ZMQ control socket.
+        # Initialize SUB socket.
+        logging.info("Starting new ZMQ listener socket...")
+        context = zmq.Context()
+        socket = context.socket(zmq.SUB)
+
+        logging.info(f"Connecting to ZMQ address: {zmq_address}")
+        socket.connect(zmq_address)
+        socket.setsockopt_string(zmq.SUBSCRIBE, "")
+
+        loop = asyncio.get_event_loop()
+
+        def recv_msg():
+            """Receives a message from the ZMQ socket in a non-blocking way.
+            
+            Returns:
+                The received message as a JSON object, or None if no message is available.
+            """
+            
+            try:
+                # logging.info("Receiving message from ZMQ...")
+                return socket.recv_string(flags=zmq.NOBLOCK)  # or jsonpickle.decode(msg_str) if needed
+            except zmq.Again:
+                return None
+
+        while True:
+            # Send progress as JSON string with prefix.
+            msg = await loop.run_in_executor(None, recv_msg)
+
+            if msg:
+                try:
+                    logging.info(f"Sending progress report to client: {msg}")
+                    channel.send(f"ZMQ_CTRL::{msg}")
+                    # logging.info("Progress report sent to client.")
+                except Exception as e:
+                    logging.error(f"Failed to send ZMQ progress: {e}")
+                    
+            # Polling interval.
+            await asyncio.sleep(0.05)
+
+
+    def start_zmq_control(self, zmq_address: str = "tcp://127.0.0.1:9001"): # Publish Port
         """Starts a ZMQ ctrl PUB socket to forward ZMQ commands to the LossViewer.
     
         Args:
@@ -113,7 +197,8 @@ class RTCGUIClient:
                 logging.info(f"Sending new offer to worker: {self.target_worker}")
                 await self.websocket.send(json.dumps({
                     'type': self.pc.localDescription.type,
-                    'target': self.target_worker,
+                    'sender': self.peer_id, # should be own peer_id (Zoom username)
+                    'target': self.target_worker, # should be Worker's peer_id
                     'sdp': self.pc.localDescription.sdp
                 }))
 
@@ -228,14 +313,14 @@ class RTCGUIClient:
         else: 
             logging.info(f"Sending {file_path} to worker...")
 
-            # Send output directory.
+            # Send output directory (where models will be saved).
             output_dir = "models"
             if self.config_info_list:
                 output_dir = self.config_info_list[0].config.outputs.runs_folder
 
             self.data_channel.send(f"OUTPUT_DIR::{output_dir}")
 
-            # Obtain metadata.
+            # Obtain file metadata.
             file_name = Path(file_path).name
             file_size = Path(file_path).stat().st_size
 
@@ -256,6 +341,7 @@ class RTCGUIClient:
 
         # Start ZMQ control socket.
         self.start_zmq_control()
+        asyncio.create_task(self.start_zmq_listener(self.data_channel))
         logging.info(f'{self.data_channel.label} ZMQ control socket started')
             
         return
@@ -315,6 +401,7 @@ class RTCGUIClient:
                 self.received_files.clear()
 
                 # Update monitor window with file transfer and training completion.
+                # Can close LossViewer window NOW since EOF_FILE received.
                 # self.win.close()
                 close_msg = {
                     "event": "rtc_close_monitor",
@@ -408,6 +495,7 @@ class RTCGUIClient:
                         model_type = config_info.head_name
 
                         if self.win:
+                            #
                             logging.info("Resetting monitor window.")
                             plateau_patience = job.optimization.early_stopping.plateau_patience
                             plateau_min_delta = job.optimization.early_stopping.plateau_min_delta
@@ -439,7 +527,7 @@ class RTCGUIClient:
                 except Exception as e:
                     logging.error(f"Failed to parse training job config: {e}")
 
-            elif "TRAIN_JOB_END::" in message:
+            elif "TRAIN_JOB_END::" in message: # ONLY TO SIGNAL TRAINING JOB END, NOT WHOLE TRAINING SESSION END.
                 # Training job end message received.
                 _, job_info = message.split("TRAIN_JOB_END::", 1)
                 logging.info(f"Train job completed: {job_info}, checking for next job...")
@@ -447,11 +535,11 @@ class RTCGUIClient:
                 # Update LossViewer window to indicate training completion based on how many training jobs left.
                 if len(self.config_info_list) == 0:
                     logging.info("No more training jobs to run. Closing LossViewer window.")
-                    close_msg = {
-                        "event": "rtc_close_monitor"
-                    }
-                    self.ctrl_socket.send_string(jsonpickle.encode(close_msg))
-                    await self.clean_exit()
+                    # close_msg = {
+                    #     "event": "rtc_close_monitor"
+                    # }
+                    # self.ctrl_socket.send_string(jsonpickle.encode(close_msg))
+                    # await self.clean_exit()
                 else:
                     logging.info(f"More training jobs to run: {len(self.config_info_list)} remaining.")
                     # Handle next job with TRAIN_JOB_START message.
@@ -585,35 +673,80 @@ class RTCGUIClient:
         logging.info("Setting up RTC data channel for LossViewer...")
         self.win.set_rtc_channel(channel)    
 
+        # Sign-in anonymously with Cognito to get an ID token.
+        id_token = self.request_anonymous_signin()
+
+        if not id_token:
+            logging.error("Failed to get anonymous ID token. Exiting client.")
+            return
+        
+        logging.info(f"Anonymous ID token received: {id_token}")
+
+        # No room creation needed for GUI Client since using Worker credentials.
+        # Only needs its own Cognito ID token and peer ID 
+        # Create the room and get the room ID and token.
+        # room_json = self.request_create_room(id_token)
+        # logging.info(f"Room created with ID: {room_json['room_id']} and token: {room_json['token']}")
+
         # Initate the WebSocket connection to the signaling server.
         async with websockets.connect(f"{self.DNS}:{self.port_number}") as websocket:
 
             # Initate the websocket for the GUI client (so other functions can use). 
             self.websocket = websocket
 
+            # Prompt for session string.
+            while True:
+                session_string = input("Please enter RTC session string (or type 'exit' to quit): ")
+                if session_string.lower() == "exit":
+                    print("Exiting client.")
+                    return  # <-- This exits the current function (e.g., run_client)
+                try:
+                    session_str_json = self.parse_session_string(session_string)
+                    break  # Exit loop if parsing succeeds
+                except ValueError as e:
+                    print(f"Error: {e}")
+                    print("Please try again or type 'exit' to quit.")
+            
+            # Extract worker credentials from session string.
+            worker_room_id = session_str_json.get("room_id")
+            worker_token = session_str_json.get("token")
+            worker_peer_id = session_str_json.get("worker_peer_id")
+
             # Register the client with the signaling server.
-            await websocket.send(json.dumps({'type': 'register', 'peer_id': self.peer_id}))
+            logging.info(f"Registering {self.peer_id} with signaling server...")
+            await self.websocket.send(json.dumps({
+                'type': 'register', 
+                'peer_id': self.peer_id, # should be own peer_id (Zoom username)
+                'room_id': worker_room_id, # should match Worker's room_id (Zoom meeting ID)
+                'token': worker_token, # should match Worker's token (Zoom meeting password)
+                'id_token': id_token, # should be own Cognito ID token
+            }))
+            # await websocket.send(json.dumps({'type': 'register', 'peer_id': self.peer_id}))
             logging.info(f"{self.peer_id} sent to signaling server for registration!")
 
-            # Query for available workers.
-            await websocket.send(json.dumps({'type': 'query'}))
-            response = await websocket.recv()
-            available_workers = json.loads(response)["peers"]
-            logging.info(f"Available workers: {available_workers}")
+            # # Query for available workers.
+            # await websocket.send(json.dumps({'type': 'query'}))
+            # response = await websocket.recv()
+            # available_workers = json.loads(response)["peers"]
+            # logging.info(f"Available workers: {available_workers}")
 
             # Select a worker to connect to.
-            target_worker = available_workers[0] if available_workers else None
+            # target_worker = available_workers[0] if available_workers else None
+
+            # self.peer_id should match Worker's peer_id (Zoom username).
+            target_worker = worker_peer_id
             logging.info(f"Selected worker: {target_worker}")
 
             if not target_worker:
-                logging.info("No workers available")
+                logging.info("No target worker given. Cannot connect.")
                 return
             
             # Create and send SDP offer to worker peer.
             await self.pc.setLocalDescription(await self.pc.createOffer())
             await websocket.send(json.dumps({
-                'type': self.pc.localDescription.type,
-                'target': target_worker,
+                'type': self.pc.localDescription.type, # type: 'offer'
+                'sender': self.peer_id, # should be own peer_id (Zoom username)
+                'target': target_worker, # should match Worker's peer_id (Zoom username)
                 'sdp': self.pc.localDescription.sdp
             }))
             logging.info('Offer sent to worker')
