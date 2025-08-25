@@ -122,7 +122,7 @@ class RTCGUIClient:
 
             if msg:
                 try:
-                    logging.info(f"Sending progress report to client: {msg}")
+                    logging.info(f"Sending ZMQ command to worker: {msg}")
                     channel.send(f"ZMQ_CTRL::{msg}")
                     # logging.info("Progress report sent to client.")
                 except Exception as e:
