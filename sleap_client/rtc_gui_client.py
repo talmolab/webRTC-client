@@ -75,7 +75,7 @@ class RTCGUIClient:
         url = "http://ec2-54-176-92-10.us-west-1.compute.amazonaws.com:8001/anonymous-signin"
         response = requests.post(url)
 
-        if response.status_code != 200:
+        if response.status_code == 200:
             return response.json()['id_token']
         else:
             logging.error(f"Failed to get anonymous token: {response.text}")
@@ -266,11 +266,13 @@ class RTCGUIClient:
                     await self.clean_exit()
                     break
 
+                # Handle the "registered_auth" message from the signaling server.
+                elif data.get('type') == 'registered_auth':
+                    logging.info(f"Client authenticated with server.")
+
                 # Unhandled message types.
                 else:
                     logging.debug(f"Unhandled message: {data}")
-                    logging.debug("exiting...")
-                    break
         
         except json.JSONDecodeError:
             logging.DEBUG("Invalid JSON received")
@@ -388,7 +390,7 @@ class RTCGUIClient:
 
                 try:
                     os.makedirs(self.output_dir, exist_ok=True)
-                    file_path = Path.join(self.output_dir, file_name)
+                    file_path = Path(self.output_dir).joinpath(file_name)
     
                     with open(file_path, "wb") as file:
                         file.write(file_data)
@@ -623,7 +625,7 @@ class RTCGUIClient:
                 await self.clean_exit()
                 return
             
-            reconnection_success = await self.reconnect(self.pc, self.websocket)
+            reconnection_success = await self.reconnect()
             self.reconnecting = False
             if not reconnection_success:
                 logging.info("Reconnection failed. Closing connection...")
@@ -671,7 +673,8 @@ class RTCGUIClient:
         # Initialize LossViewer RTC data channel event handlers.
         # Doesn't directly interact with window, so doesn't need to be in main thread.
         logging.info("Setting up RTC data channel for LossViewer...")
-        self.win.set_rtc_channel(channel)    
+        self.win.set_rtc_channel(channel)   
+        self.reconnect_attempts = 0 
 
         # Sign-in anonymously with Cognito to get an ID token.
         id_token = self.request_anonymous_signin()
@@ -710,7 +713,7 @@ class RTCGUIClient:
             # Extract worker credentials from session string.
             worker_room_id = session_str_json.get("room_id")
             worker_token = session_str_json.get("token")
-            worker_peer_id = session_str_json.get("worker_peer_id")
+            worker_peer_id = session_str_json.get("peer_id")
 
             # Register the client with the signaling server.
             logging.info(f"Registering {self.peer_id} with signaling server...")
@@ -734,10 +737,10 @@ class RTCGUIClient:
             # target_worker = available_workers[0] if available_workers else None
 
             # self.peer_id should match Worker's peer_id (Zoom username).
-            target_worker = worker_peer_id
-            logging.info(f"Selected worker: {target_worker}")
+            self.target_worker = worker_peer_id
+            logging.info(f"Selected worker: {self.target_worker}")
 
-            if not target_worker:
+            if not self.target_worker:
                 logging.info("No target worker given. Cannot connect.")
                 return
             
@@ -746,7 +749,7 @@ class RTCGUIClient:
             await websocket.send(json.dumps({
                 'type': self.pc.localDescription.type, # type: 'offer'
                 'sender': self.peer_id, # should be own peer_id (Zoom username)
-                'target': target_worker, # should match Worker's peer_id (Zoom username)
+                'target': self.target_worker, # should match Worker's peer_id (Zoom username)
                 'sdp': self.pc.localDescription.sdp
             }))
             logging.info('Offer sent to worker')
