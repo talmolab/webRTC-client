@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sleap_client"
-version = "0.0.2a52"
+version = "0.0.4a6"
 authors = [
   { name="Amick Licup", email="alicup@ucsd.edu" }
 ]
@@ -20,8 +20,10 @@ classifiers = [
 ]
 dependencies = [
   "aiortc",
-  "asyncio",
-  "websockets",  
+  "websockets",
+  "jsonpickle", 
+  "pyzmq",
+  "qtpy",
 ]
 
 [project.urls]
